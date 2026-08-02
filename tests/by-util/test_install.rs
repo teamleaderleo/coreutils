@@ -2935,6 +2935,82 @@ fn test_install_proc_self_mem_as_dst() {
 }
 
 #[test]
+fn test_install_refuses_to_overwrite_just_created_destination() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+
+    scene
+        .ucmd()
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .fails()
+        .stderr_is("install: will not overwrite just-created 'dest/file' with 'source2/file'\n");
+
+    assert_eq!(at.read("dest/file"), "first");
+}
+
+#[test]
+fn test_install_refusal_preserves_original_simple_backup() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+    at.write("dest/file", "original");
+
+    scene
+        .ucmd()
+        .arg("--backup=simple")
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .fails()
+        .stderr_is("install: will not overwrite just-created 'dest/file' with 'source2/file'\n");
+
+    assert_eq!(at.read("dest/file"), "first");
+    assert_eq!(at.read("dest/file~"), "original");
+}
+
+#[test]
+fn test_install_numbered_backups_allow_repeated_destination() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+    at.write("dest/file", "original");
+
+    scene
+        .ucmd()
+        .arg("--backup=numbered")
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .succeeds()
+        .no_stderr();
+
+    assert_eq!(at.read("dest/file"), "second");
+    assert_eq!(at.read("dest/file.~1~"), "original");
+    assert_eq!(at.read("dest/file.~2~"), "first");
+}
+
+#[test]
 fn test_install_backup_nil_same_file() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;

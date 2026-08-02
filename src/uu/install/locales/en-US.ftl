@@ -42,6 +42,7 @@ install-error-not-a-directory = failed to access { $path }: Not a directory
 install-error-existing-file-not-directory = cannot create directory { $path }: File exists
 install-error-override-directory-failed = cannot overwrite directory { $dir } with non-directory { $file }
 install-error-same-file = { $file1 } and { $file2 } are the same file
+install-error-will-not-overwrite-just-created = will not overwrite just-created { $dest } with { $source }
 install-error-extra-operand = extra operand { $operand }
 { $usage }
 install-error-not-permitted = cannot remove { $path }: Operation not permitted
