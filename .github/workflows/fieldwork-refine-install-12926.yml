@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fieldwork/install-refuse-just-created-overwrite-12926
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -14,7 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ github.ref_name }}
           fetch-depth: 0
           persist-credentials: true
 
@@ -62,6 +64,7 @@ jobs:
         run: cargo clippy --features install --no-default-features --all-targets -- -D warnings
 
       - name: Promote verified source
+        if: github.event_name == 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
