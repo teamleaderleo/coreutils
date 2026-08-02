@@ -1,0 +1,71 @@
+name: Fieldwork refine install 12926
+
+on:
+  push:
+    branches:
+      - fieldwork/install-refuse-just-created-overwrite-12926
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check candidate applies cleanly
+        run: git apply --check .fieldwork/refine-install-12926.patch
+
+      - name: Apply candidate
+        run: git apply .fieldwork/refine-install-12926.patch
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Test original refusal
+        run: cargo test --features install --no-default-features test_install_refuses_to_overwrite_just_created_destination
+
+      - name: Test backup preservation
+        run: cargo test --features install --no-default-features test_install_refusal_preserves_original_simple_backup
+
+      - name: Test numbered-backup exception
+        run: cargo test --features install --no-default-features test_install_numbered_backups_allow_repeated_destination
+
+      - name: Test compare no-op ownership
+        run: cargo test --features install --no-default-features test_install_compare_noop_does_not_reserve_destination
+
+      - name: Test pre-copy failure ownership
+        run: cargo test --features install --no-default-features test_install_missing_source_does_not_reserve_destination
+
+      - name: Test post-copy failure ownership
+        run: cargo test --features install --no-default-features test_install_post_copy_chown_failure_reserves_destination
+
+      - name: Test strip cleanup ownership
+        run: cargo test --features install --no-default-features test_install_strip_failure_releases_destination
+
+      - name: Run install test module
+        run: cargo test --features install --no-default-features --test tests test_install
+
+      - name: Run focused clippy
+        run: cargo clippy --features install --no-default-features --all-targets -- -D warnings
+
+      - name: Promote verified source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/uu/install/src/install.rs tests/by-util/test_install.rs
+          git rm .fieldwork/refine-install-12926.patch .github/workflows/fieldwork-refine-install-12926.yml
+          git commit -m "install: track just-created destinations across partial failures"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
