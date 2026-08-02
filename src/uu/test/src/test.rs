@@ -10,6 +10,7 @@ mod parser;
 
 use clap::Command;
 use error::{ParseError, ParseResult};
+use num_bigint::BigInt;
 use parser::{Operator, Symbol, UnaryOperator, parse};
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -175,13 +176,13 @@ fn eval(stack: &mut Vec<Symbol>) -> ParseResult<bool> {
 /// `op` the operation (ex: -eq, -lt, etc)
 fn integers(a: &OsStr, b: &OsStr, op: &OsStr) -> ParseResult<bool> {
     // Parse the two inputs
-    let a: i128 = a
+    let a: BigInt = a
         .to_str()
         .map(str::trim)
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| ParseError::InvalidInteger(a.quote().to_string()))?;
 
-    let b: i128 = b
+    let b: BigInt = b
         .to_str()
         .map(str::trim)
         .and_then(|s| s.parse().ok())
@@ -441,5 +442,16 @@ mod tests {
         let a = OsStr::new("42");
         let b = OsStr::new("42");
         assert!(!integers(a, b, OsStr::new("-ne")).unwrap());
+
+        let huge = OsStr::new(
+            "16267277278126277227728782172782882627278282882172762677623672762783782",
+        );
+        assert!(integers(huge, huge, OsStr::new("-eq")).unwrap());
+        assert!(integers(huge, OsStr::new("1"), OsStr::new("-gt")).unwrap());
+
+        let negative_huge = OsStr::new(
+            "-16267277278126277227728782172782882627278282882172762677623672762783782",
+        );
+        assert!(integers(negative_huge, huge, OsStr::new("-lt")).unwrap());
     }
 }
