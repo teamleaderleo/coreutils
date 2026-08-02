@@ -443,15 +443,13 @@ mod tests {
         let b = OsStr::new("42");
         assert!(!integers(a, b, OsStr::new("-ne")).unwrap());
 
-        let huge = OsStr::new(
-            "16267277278126277227728782172782882627278282882172762677623672762783782",
-        );
+        let huge =
+            OsStr::new("16267277278126277227728782172782882627278282882172762677623672762783782");
         assert!(integers(huge, huge, OsStr::new("-eq")).unwrap());
         assert!(integers(huge, OsStr::new("1"), OsStr::new("-gt")).unwrap());
 
-        let negative_huge = OsStr::new(
-            "-16267277278126277227728782172782882627278282882172762677623672762783782",
-        );
+        let negative_huge =
+            OsStr::new("-16267277278126277227728782172782882627278282882172762677623672762783782");
         assert!(integers(negative_huge, huge, OsStr::new("-lt")).unwrap());
     }
 }
