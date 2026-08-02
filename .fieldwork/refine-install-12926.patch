@@ -1,0 +1,197 @@
+diff --git a/src/uu/install/src/install.rs b/src/uu/install/src/install.rs
+--- a/src/uu/install/src/install.rs
++++ b/src/uu/install/src/install.rs
+@@ -860,12 +860,43 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
+             continue;
+         }
+ 
+-        match copy(sourcepath, &targetpath, b) {
+-            Ok(()) => {
+-                copied_destinations.insert(targetpath);
+-            }
+-            Err(err) => show!(err),
+-        }
++        show_if_err!(copy_into_dir_entry(
++            sourcepath,
++            &targetpath,
++            b,
++            &mut copied_destinations,
++        ));
+     }
+     // If the exit code was set, or show! has been called at least once
+     // (which sets the exit code as well), function execution will end after
+     // this return.
+     Ok(())
+ }
++
++/// Copy one source into a multi-source target directory and track whether this
++/// invocation created the destination name.
++fn copy_into_dir_entry(
++    from: &Path,
++    to: &Path,
++    b: &Behavior,
++    copied_destinations: &mut HashSet<PathBuf>,
++) -> UResult<()> {
++    if b.compare && !need_copy(from, to, b) {
++        return Ok(());
++    }
++
++    let backup_path = perform_backup(from, to, b)?;
++    copy_file(from, to)?;
++
++    // Destination ownership begins when the data copy creates the file, before
++    // post-copy metadata operations. A failed chown must still protect that
++    // file from a later same-name source in this invocation.
++    copied_destinations.insert(to.to_path_buf());
++
++    let result = finalize_installed_file(from, to, b, backup_path);
++
++    // strip_file removes the destination when stripping fails. In that case
++    // there is no just-created name left to protect, so a later source may use
++    // it. Keep ownership for other failures that leave the destination present.
++    if result.is_err()
++        && matches!(
++            fs::symlink_metadata(to),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound
++        )
++    {
++        copied_destinations.remove(to);
++    }
++
++    result
++}
+ 
+ /// Handle ownership changes when -o/--owner or -g/--group flags are used.
+ ///
+ /// Returns a Result type with the Err variant containing the error message.
+diff --git a/tests/by-util/test_install.rs b/tests/by-util/test_install.rs
+--- a/tests/by-util/test_install.rs
++++ b/tests/by-util/test_install.rs
+@@ -3009,6 +3009,126 @@ fn test_install_numbered_backups_allow_repeated_destination() {
+     assert_eq!(at.read("dest/file.~2~"), "first");
+ }
+ 
++#[test]
++fn test_install_compare_noop_does_not_reserve_destination() {
++    let scene = TestScenario::new(util_name!());
++    let at = &scene.fixtures;
++
++    at.mkdir_all("source1");
++    at.mkdir_all("source2");
++    at.mkdir("dest");
++    at.write("source1/file", "first");
++    at.write("source2/file", "second");
++    at.write("dest/file", "first");
++
++    // Make the first source and destination identical under --compare,
++    // including install's default mode, so the first operand is a true no-op.
++    for path in ["source1/file", "source2/file", "dest/file"] {
++        let path = at.plus(path);
++        let mut permissions = fs::metadata(&path).unwrap().permissions();
++        permissions.set_mode(0o755);
++        fs::set_permissions(path, permissions).unwrap();
++    }
++
++    scene
++        .ucmd()
++        .arg("--compare")
++        .arg("-t")
++        .arg("dest")
++        .arg("source1/file")
++        .arg("source2/file")
++        .succeeds()
++        .no_stderr();
++
++    assert_eq!(at.read("dest/file"), "second");
++}
++
++#[test]
++fn test_install_missing_source_does_not_reserve_destination() {
++    let scene = TestScenario::new(util_name!());
++    let at = &scene.fixtures;
++
++    at.mkdir_all("source2");
++    at.mkdir("dest");
++    at.write("source2/file", "second");
++
++    scene
++        .ucmd()
++        .arg("-t")
++        .arg("dest")
++        .arg("missing/file")
++        .arg("source2/file")
++        .fails()
++        .stderr_contains("cannot stat 'missing/file'");
++
++    assert_eq!(at.read("dest/file"), "second");
++}
++
++#[test]
++#[cfg(unix)]
++fn test_install_post_copy_chown_failure_reserves_destination() {
++    if geteuid() == 0 {
++        return;
++    }
++
++    let scene = TestScenario::new(util_name!());
++    let at = &scene.fixtures;
++
++    at.mkdir_all("source1");
++    at.mkdir_all("source2");
++    at.mkdir("dest");
++    at.write("source1/file", "first");
++    at.write("source2/file", "second");
++
++    scene
++        .ucmd()
++        .arg("--owner=root")
++        .arg("-t")
++        .arg("dest")
++        .arg("source1/file")
++        .arg("source2/file")
++        .fails()
++        .stderr_contains("failed to chown")
++        .stderr_contains("will not overwrite just-created");
++
++    assert_eq!(at.read("dest/file"), "first");
++}
++
++#[test]
++#[cfg(unix)]
++fn test_install_strip_failure_releases_destination() {
++    let scene = TestScenario::new(util_name!());
++    let at = &scene.fixtures;
++
++    at.mkdir_all("source1");
++    at.mkdir_all("source2");
++    at.mkdir("dest");
++    at.write("source1/file", "first");
++    at.write("source2/file", "second");
++    at.write(
++        "strip-fails",
++        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> strip.log\nexit 1\n",
++    );
++
++    let strip_program = at.plus("strip-fails");
++    let mut permissions = fs::metadata(&strip_program).unwrap().permissions();
++    permissions.set_mode(0o755);
++    fs::set_permissions(&strip_program, permissions).unwrap();
++
++    scene
++        .ucmd()
++        .arg("--strip")
++        .arg("--strip-program")
++        .arg(strip_program)
++        .arg("-t")
++        .arg("dest")
++        .arg("source1/file")
++        .arg("source2/file")
++        .fails();
++
++    assert_eq!(at.read("strip.log").lines().count(), 2);
++    assert!(!at.file_exists("dest/file"));
++}
++
+ #[test]
+ fn test_install_backup_nil_same_file() {
+     let scene = TestScenario::new(util_name!());
