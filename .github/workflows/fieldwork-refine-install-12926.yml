@@ -4,37 +4,37 @@ on:
   push:
     branches:
       - fieldwork/install-refuse-just-created-overwrite-12926
-  pull_request:
-    branches:
-      - main
 
 permissions:
   contents: write
 
 jobs:
   verify-and-promote:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: stable
           components: clippy,rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
       - name: Check candidate applies cleanly
         run: git apply --check .fieldwork/refine-install-12926.patch
 
-      - name: Apply candidate
-        run: git apply .fieldwork/refine-install-12926.patch
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Apply and format candidate
+        run: |
+          set -euo pipefail
+          git apply .fieldwork/refine-install-12926.patch
+          cargo fmt --all
+          test "$(git diff --name-only | sort)" = $'src/uu/install/src/install.rs\ntests/by-util/test_install.rs'
+          cargo fmt --all -- --check
+          git diff --check
 
       - name: Test original refusal
         run: cargo test --features install --no-default-features test_install_refuses_to_overwrite_just_created_destination
@@ -67,8 +67,9 @@ jobs:
         run: cargo clippy --features install --no-default-features --all-targets -- -D warnings
 
       - name: Promote verified source
-        if: github.event_name == 'push'
         run: |
+          set -euo pipefail
+          test "$(git diff --name-only | sort)" = $'src/uu/install/src/install.rs\ntests/by-util/test_install.rs'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/uu/install/src/install.rs tests/by-util/test_install.rs
