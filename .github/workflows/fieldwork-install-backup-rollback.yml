@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fieldwork/install-restore-backup-on-copy-error
+  pull_request:
+    branches:
+      - base/canonical-main-20260803
 
 permissions:
   contents: write
@@ -55,6 +58,7 @@ jobs:
           git diff -- src/uu/install/src/install.rs src/uu/install/locales/en-US.ftl src/uu/install/locales/fr-FR.ftl tests/by-util/test_install.rs
 
       - name: Promote verified source
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           test "$(git diff --name-only | sort)" = $'src/uu/install/locales/en-US.ftl\nsrc/uu/install/locales/fr-FR.ftl\nsrc/uu/install/src/install.rs\ntests/by-util/test_install.rs'
