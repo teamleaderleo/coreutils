@@ -1,7 +1,7 @@
 diff --git a/src/uu/install/src/install.rs b/src/uu/install/src/install.rs
 --- a/src/uu/install/src/install.rs
 +++ b/src/uu/install/src/install.rs
-@@ -860,19 +860,56 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
+@@ -860,19 +860,44 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
              continue;
          }
  
@@ -24,31 +24,19 @@ diff --git a/src/uu/install/src/install.rs b/src/uu/install/src/install.rs
      Ok(())
  }
 +
-+/// Copy one source into a multi-source target directory and track whether this
-+/// invocation created the destination name.
 +fn copy_into_dir_entry(
 +    from: &Path,
 +    to: &Path,
 +    b: &Behavior,
 +    copied_destinations: &mut HashSet<PathBuf>,
 +) -> UResult<()> {
-+    if b.compare && !need_copy(from, to, b) {
-+        return Ok(());
-+    }
++    let result = copy_with_created_callback(from, to, b, || {
++        copied_destinations.insert(to.to_path_buf());
++    });
 +
-+    let backup_path = perform_backup(from, to, b)?;
-+    copy_file(from, to)?;
-+
-+    // Destination ownership begins when the data copy creates the file, before
-+    // post-copy metadata operations. A failed chown must still protect that
-+    // file from a later same-name source in this invocation.
-+    copied_destinations.insert(to.to_path_buf());
-+
-+    let result = finalize_installed_file(from, to, b, backup_path);
-+
-+    // strip_file removes the destination when stripping fails. In that case
-+    // there is no just-created name left to protect, so a later source may use
-+    // it. Keep ownership for other failures that leave the destination present.
++    // A failed strip removes the destination. Release the name only when no
++    // directory entry remains; other post-copy failures leave a just-created
++    // file that later same-name sources must not overwrite.
 +    if result.is_err()
 +        && matches!(
 +            fs::symlink_metadata(to),
@@ -64,6 +52,33 @@ diff --git a/src/uu/install/src/install.rs b/src/uu/install/src/install.rs
  /// Handle ownership changes when -o/--owner or -g/--group flags are used.
  ///
  /// Returns a Result type with the Err variant containing the error message.
+@@ -1202,13 +1227,26 @@ fn copy(from: &Path, to: &Path, b: &Behavior) -> UResult<()> {
++    copy_with_created_callback(from, to, b, || {})
++}
++
++fn copy_with_created_callback<F>(
++    from: &Path,
++    to: &Path,
++    b: &Behavior,
++    on_created: F,
++) -> UResult<()>
++where
++    F: FnOnce(),
++{
+     if b.compare && !need_copy(from, to, b) {
+         return Ok(());
+     }
+     // Declare the path here as we may need it for the verbose output below.
+     let backup_path = perform_backup(from, to, b)?;
+ 
+     copy_file(from, to)?;
++    on_created();
+ 
+     finalize_installed_file(from, to, b, backup_path)
+ }
+ 
+ #[cfg(all(feature = "selinux", any(target_os = "linux", target_os = "android")))]
+ fn get_context_for_selinux(b: &Behavior) -> Option<&String> {
 diff --git a/tests/by-util/test_install.rs b/tests/by-util/test_install.rs
 --- a/tests/by-util/test_install.rs
 +++ b/tests/by-util/test_install.rs
