@@ -76,8 +76,7 @@ replace_between(
 ''',
     '''mod options {
 ''',
-    '''mod options {
-''',
+    '',
 )
 replace_between(
     cat,
@@ -172,7 +171,6 @@ where
     }
 }
 
-/// Writes handle to stdout with no configuration. This allows a
 ''',
 )
 replace_once(
