@@ -48,8 +48,11 @@ jobs:
       - name: Test compare no-op ownership
         run: cargo test --features install --no-default-features test_install_compare_noop_does_not_reserve_destination
 
-      - name: Test pre-copy failure ownership
+      - name: Test missing-source ownership
         run: cargo test --features install --no-default-features test_install_missing_source_does_not_reserve_destination
+
+      - name: Test copy-error ownership
+        run: cargo test --features install --no-default-features test_install_copy_error_does_not_reserve_destination
 
       - name: Test post-copy failure ownership
         run: cargo test --features install --no-default-features test_install_post_copy_chown_failure_reserves_destination
