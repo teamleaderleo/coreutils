@@ -1,0 +1,64 @@
+name: Fieldwork cp sparse early EOF
+
+on:
+  push:
+    branches:
+      - fieldwork/cp-sparse-early-eof-12648
+  pull_request:
+    branches:
+      - base/canonical-main-20260804
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Apply and format fail-closed candidate
+        run: |
+          set -euo pipefail
+          python3 .fieldwork/apply-cp-sparse-early-eof.py
+          cargo fmt --all
+          test "$(git diff --name-only | sort)" = 'src/uu/cp/src/platform/linux.rs'
+          cargo fmt --all -- --check
+          git diff --check
+
+      - name: Test deterministic early EOF transition
+        run: cargo test -p uu_cp sparse_copy_data_truncates_destination_on_early_eof --lib
+
+      - name: Run cp integration module
+        run: cargo test --features cp --no-default-features --test tests test_cp
+
+      - name: Run focused clippy
+        run: cargo clippy --features cp --no-default-features --all-targets -- -D warnings
+
+      - name: Record candidate diff
+        if: always()
+        run: |
+          git diff --stat
+          git diff -- src/uu/cp/src/platform/linux.rs
+
+      - name: Promote verified source
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only | sort)" = 'src/uu/cp/src/platform/linux.rs'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/uu/cp/src/platform/linux.rs
+          git rm .fieldwork/apply-cp-sparse-early-eof.py .github/workflows/fieldwork-cp-sparse-early-eof.yml
+          git commit -m "cp: stop sparse copy at early EOF"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
