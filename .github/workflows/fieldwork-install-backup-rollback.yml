@@ -1,0 +1,65 @@
+name: Fieldwork install backup rollback
+
+on:
+  push:
+    branches:
+      - fieldwork/install-restore-backup-on-copy-error
+  pull_request:
+    branches:
+      - base/canonical-main-20260803
+
+permissions:
+  contents: read
+
+jobs:
+  verify-held-candidate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Apply and format fail-closed candidate
+        run: |
+          set -euo pipefail
+          python3 .fieldwork/apply-install-backup-rollback.py
+          cargo fmt --all
+          test "$(git diff --name-only | sort)" = $'src/uu/install/locales/en-US.ftl\nsrc/uu/install/locales/fr-FR.ftl\nsrc/uu/install/src/install.rs\ntests/by-util/test_install.rs'
+          cargo fmt --all -- --check
+          git diff --check
+
+      - name: Test backup restoration modes
+        run: cargo test --features install --no-default-features test_install_restores_destination_after_copy_error_with_backup
+
+      - name: Test later-source backup preservation
+        run: cargo test --features install --no-default-features test_install_copy_error_rollback_preserves_original_backup_for_later_source
+
+      - name: Test seeded existing mode
+        run: cargo test --features install --no-default-features test_install_copy_error_rollback_preserves_existing_numbered_backup
+
+      - name: Run install test module
+        run: cargo test --features install --no-default-features --test tests test_install
+
+      - name: Run focused clippy
+        run: cargo clippy --features install --no-default-features --all-targets -- -D warnings
+
+      - name: Record held candidate diff
+        if: always()
+        run: |
+          git diff --stat
+          git diff -- src/uu/install/src/install.rs src/uu/install/locales/en-US.ftl src/uu/install/locales/fr-FR.ftl tests/by-util/test_install.rs
+
+      - name: Explain hold
+        run: |
+          printf '%s\n' \
+            'Candidate promotion is intentionally disabled.' \
+            'Path-based rollback cleanup can remove a replacement inserted after copy failure.' \
+            'A source candidate must first retain and verify the created destination identity, preferably by integrating with fd-bound finalization work.'
