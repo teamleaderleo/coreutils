@@ -9,16 +9,16 @@ on:
       - base/canonical-main-20260803
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  verify-and-promote:
+  verify-held-candidate:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -51,20 +51,15 @@ jobs:
       - name: Run focused clippy
         run: cargo clippy --features install --no-default-features --all-targets -- -D warnings
 
-      - name: Record candidate diff
+      - name: Record held candidate diff
         if: always()
         run: |
           git diff --stat
           git diff -- src/uu/install/src/install.rs src/uu/install/locales/en-US.ftl src/uu/install/locales/fr-FR.ftl tests/by-util/test_install.rs
 
-      - name: Promote verified source
-        if: github.event_name == 'push'
+      - name: Explain hold
         run: |
-          set -euo pipefail
-          test "$(git diff --name-only | sort)" = $'src/uu/install/locales/en-US.ftl\nsrc/uu/install/locales/fr-FR.ftl\nsrc/uu/install/src/install.rs\ntests/by-util/test_install.rs'
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/uu/install/src/install.rs src/uu/install/locales/en-US.ftl src/uu/install/locales/fr-FR.ftl tests/by-util/test_install.rs
-          git rm .fieldwork/apply-install-backup-rollback.py .github/workflows/fieldwork-install-backup-rollback.yml
-          git commit -m "install: restore backups when the data copy fails"
-          git push origin HEAD:"${GITHUB_REF_NAME}"
+          printf '%s\n' \
+            'Candidate promotion is intentionally disabled.' \
+            'Path-based rollback cleanup can remove a replacement inserted after copy failure.' \
+            'A source candidate must first retain and verify the created destination identity, preferably by integrating with fd-bound finalization work.'
