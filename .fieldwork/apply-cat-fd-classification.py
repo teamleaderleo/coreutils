@@ -25,17 +25,6 @@ def replace_between(path: Path, start: str, end: str, replacement: str) -> None:
 
 
 cat = Path("src/uu/cat/src/cat.rs")
-replace_once(
-    cat,
-    '''    /// Unknown file type; it's not a regular file, socket, etc.
-    #[error("{}", translate!("cat-error-unknown-filetype", "ft_debug" => .ft_debug))]
-    UnknownFiletype {
-        /// A debug print of the file type
-        ft_debug: String,
-    },
-''',
-    '',
-)
 replace_between(
     cat,
     '''/// Concrete enum of recognized file types.
@@ -71,18 +60,41 @@ fn map_open_error(path: &OsString, error: io::Error) -> CatError {
 }
 
 #[cfg(unix)]
-fn ensure_open_input_is_not_directory(file: &File) -> CatResult<()> {
-    if file.metadata()?.is_dir() {
+fn ensure_open_input_supported(file: &File) -> CatResult<()> {
+    let file_type = file.metadata()?.file_type();
+    if file_type.is_dir() {
         Err(CatError::IsDirectory)
-    } else {
+    } else if file_type.is_file()
+        || file_type.is_fifo()
+        || file_type.is_char_device()
+        || file_type.is_block_device()
+    {
         Ok(())
+    } else {
+        Err(CatError::UnknownFiletype {
+            ft_debug: format!("{file_type:?}"),
+        })
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_open_input_supported(file: &File) -> CatResult<()> {
+    let file_type = file.metadata()?.file_type();
+    if file_type.is_dir() {
+        Err(CatError::IsDirectory)
+    } else if file_type.is_file() {
+        Ok(())
+    } else {
+        Err(CatError::UnknownFiletype {
+            ft_debug: format!("{file_type:?}"),
+        })
     }
 }
 
 #[cfg(unix)]
 fn open_input(path: &OsString) -> CatResult<File> {
     let file = File::open(path).map_err(|error| map_open_error(path, error))?;
-    ensure_open_input_is_not_directory(&file)?;
+    ensure_open_input_supported(&file)?;
     Ok(file)
 }
 
@@ -93,7 +105,9 @@ fn open_input(path: &OsString) -> CatResult<File> {
     if metadata(path)?.is_dir() {
         return Err(CatError::IsDirectory);
     }
-    Ok(File::open(path)?)
+    let file = File::open(path)?;
+    ensure_open_input_supported(&file)?;
+    Ok(file)
 }
 
 fn cat_path(path: &OsString, options: &OutputOptions, state: &mut OutputState) -> CatResult<()> {
@@ -185,62 +199,10 @@ mod tests {
         fs::rename(&path, &moved).unwrap();
         fs::create_dir(&path).unwrap();
 
-        assert!(super::ensure_open_input_is_not_directory(&file).is_ok());
+        assert!(super::ensure_open_input_supported(&file).is_ok());
         assert!(file.metadata().unwrap().is_file());
         assert!(path.is_dir());
     }
 
-''',
-)
-
-tests = Path("tests/by-util/test_cat.rs")
-replace_once(
-    tests,
-    '''#[cfg(unix)]
-use std::fs::File;
-use std::fs::OpenOptions;
-''',
-    '''#[cfg(unix)]
-use std::fs::File;
-use std::fs::OpenOptions;
-#[cfg(unix)]
-use std::os::unix::net::UnixListener;
-''',
-)
-replace_once(
-    tests,
-    '''#[test]
-fn test_directory_and_file() {
-''',
-    '''#[test]
-#[cfg(unix)]
-fn test_socket_reports_open_error() {
-    let scene = TestScenario::new(util_name!());
-    let socket = scene.fixtures.plus("socket");
-    let _listener = UnixListener::bind(&socket).unwrap();
-
-    scene
-        .ucmd()
-        .arg("socket")
-        .fails()
-        .stderr_is("cat: socket: No such device or address\\n");
-}
-
-#[test]
-#[cfg(unix)]
-fn test_symlink_loop_reports_open_error() {
-    let scene = TestScenario::new(util_name!());
-    scene.fixtures.symlink_file("loop-b", "loop-a");
-    scene.fixtures.symlink_file("loop-a", "loop-b");
-
-    scene
-        .ucmd()
-        .arg("loop-a")
-        .fails()
-        .stderr_is("cat: loop-a: Too many levels of symbolic links\\n");
-}
-
-#[test]
-fn test_directory_and_file() {
 ''',
 )
