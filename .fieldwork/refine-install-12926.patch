@@ -1,7 +1,7 @@
 diff --git a/src/uu/install/src/install.rs b/src/uu/install/src/install.rs
 --- a/src/uu/install/src/install.rs
 +++ b/src/uu/install/src/install.rs
-@@ -860,12 +860,43 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
+@@ -860,19 +860,56 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
              continue;
          }
  
@@ -67,7 +67,7 @@ diff --git a/src/uu/install/src/install.rs b/src/uu/install/src/install.rs
 diff --git a/tests/by-util/test_install.rs b/tests/by-util/test_install.rs
 --- a/tests/by-util/test_install.rs
 +++ b/tests/by-util/test_install.rs
-@@ -3009,6 +3009,126 @@ fn test_install_numbered_backups_allow_repeated_destination() {
+@@ -3009,6 +3009,127 @@ fn test_install_numbered_backups_allow_repeated_destination() {
      assert_eq!(at.read("dest/file.~2~"), "first");
  }
  
