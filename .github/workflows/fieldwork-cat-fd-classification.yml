@@ -32,17 +32,17 @@ jobs:
           set -euo pipefail
           python3 .fieldwork/apply-cat-fd-classification.py
           cargo fmt --all
-          test "$(git diff --name-only | sort)" = $'src/uu/cat/src/cat.rs\ntests/by-util/test_cat.rs'
+          test "$(git diff --name-only | sort)" = 'src/uu/cat/src/cat.rs'
           cargo fmt --all -- --check
           git diff --check
 
       - name: Test descriptor-bound classification
         run: cargo test -p uu_cat opened_input_classification_survives_path_replacement --lib
 
-      - name: Test preserved special diagnostics
+      - name: Test existing special diagnostics
         run: |
-          cargo test --features cat --no-default-features test_socket_reports_open_error
-          cargo test --features cat --no-default-features test_symlink_loop_reports_open_error
+          cargo test --features cat --no-default-features test_domain_socket
+          cargo test --features cat --no-default-features test_error_loop
           cargo test --features cat --no-default-features test_directory
 
       - name: Run cat integration module
@@ -55,16 +55,16 @@ jobs:
         if: always()
         run: |
           git diff --stat
-          git diff -- src/uu/cat/src/cat.rs tests/by-util/test_cat.rs
+          git diff -- src/uu/cat/src/cat.rs
 
       - name: Promote verified source
         if: github.event_name == 'push'
         run: |
           set -euo pipefail
-          test "$(git diff --name-only | sort)" = $'src/uu/cat/src/cat.rs\ntests/by-util/test_cat.rs'
+          test "$(git diff --name-only | sort)" = 'src/uu/cat/src/cat.rs'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/uu/cat/src/cat.rs tests/by-util/test_cat.rs
+          git add src/uu/cat/src/cat.rs
           git rm .fieldwork/apply-cat-fd-classification.py .github/workflows/fieldwork-cat-fd-classification.yml
           git commit -m "cat: classify opened inputs by descriptor"
           git push origin HEAD:"${GITHUB_REF_NAME}"
