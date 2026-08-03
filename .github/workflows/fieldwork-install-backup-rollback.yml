@@ -1,0 +1,66 @@
+name: Fieldwork install backup rollback
+
+on:
+  push:
+    branches:
+      - fieldwork/install-restore-backup-on-copy-error
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Apply fail-closed candidate
+        run: |
+          python3 .fieldwork/apply-install-backup-rollback.py
+          git diff --check
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Test backup restoration modes
+        run: cargo test --features install --no-default-features test_install_restores_destination_after_copy_error_with_backup
+
+      - name: Test later-source backup preservation
+        run: cargo test --features install --no-default-features test_install_copy_error_rollback_preserves_original_backup_for_later_source
+
+      - name: Test seeded existing mode
+        run: cargo test --features install --no-default-features test_install_copy_error_rollback_preserves_existing_numbered_backup
+
+      - name: Run install test module
+        run: cargo test --features install --no-default-features --test tests test_install
+
+      - name: Run focused clippy
+        run: cargo clippy --features install --no-default-features --all-targets -- -D warnings
+
+      - name: Record candidate diff
+        run: |
+          git diff --stat
+          git diff -- src/uu/install/src/install.rs src/uu/install/locales/en-US.ftl src/uu/install/locales/fr-FR.ftl tests/by-util/test_install.rs
+
+      - name: Promote verified source
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/uu/install/src/install.rs src/uu/install/locales/en-US.ftl src/uu/install/locales/fr-FR.ftl tests/by-util/test_install.rs
+          git rm .fieldwork/apply-install-backup-rollback.py .github/workflows/fieldwork-install-backup-rollback.yml
+          git commit -m "install: restore backups when the data copy fails"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
