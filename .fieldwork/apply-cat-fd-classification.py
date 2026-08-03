@@ -27,48 +27,14 @@ def replace_between(path: Path, start: str, end: str, replacement: str) -> None:
 cat = Path("src/uu/cat/src/cat.rs")
 replace_once(
     cat,
-    '''use std::ffi::OsString;
-use std::fs::{File, metadata};
-use std::io::{self, BufWriter, ErrorKind, IsTerminal, Read, Write};
-#[cfg(any(unix, target_os = "wasi"))]
-use std::os::fd::AsFd;
-#[cfg(unix)]
-use std::os::unix::fs::FileTypeExt;
-use thiserror::Error;
-''',
-    '''use std::ffi::OsString;
-use std::fs::File;
-#[cfg(not(unix))]
-use std::fs::metadata;
-use std::io::{self, BufWriter, ErrorKind, IsTerminal, Read, Write};
-#[cfg(any(unix, target_os = "wasi"))]
-use std::os::fd::AsFd;
-use thiserror::Error;
-''',
-)
-replace_once(
-    cat,
     '''    /// Unknown file type; it's not a regular file, socket, etc.
     #[error("{}", translate!("cat-error-unknown-filetype", "ft_debug" => .ft_debug))]
     UnknownFiletype {
         /// A debug print of the file type
         ft_debug: String,
     },
-    #[error("{}", translate!("cat-error-is-directory"))]
-    IsDirectory,
-    #[cfg(unix)]
-    #[error("{}", translate!("cat-error-no-such-device-or-address"))]
-    NoSuchDeviceOrAddress,
-    #[error("{}", translate!("cat-error-input-file-is-output-file"))]
-    OutputIsInput,
-    #[error("{}", translate!("cat-error-too-many-symbolic-links"))]
-    TooManySymlinks,
 ''',
-    '''    #[error("{}", translate!("cat-error-is-directory"))]
-    IsDirectory,
-    #[error("{}", translate!("cat-error-input-file-is-output-file"))]
-    OutputIsInput,
-''',
+    '',
 )
 replace_between(
     cat,
@@ -85,6 +51,26 @@ replace_between(
     '''/// Writes handle to stdout with no configuration. This allows a
 ''',
     '''#[cfg(unix)]
+fn map_open_error(path: &OsString, error: io::Error) -> CatError {
+    // Successful inputs are classified from their opened descriptor. A failed
+    // open consumes no file, so a path lookup here is used only to preserve the
+    // established cross-Unix socket diagnostic.
+    if metadata(path).is_ok_and(|metadata| metadata.file_type().is_socket()) {
+        return CatError::NoSuchDeviceOrAddress;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    let too_many_symlink_code = 40;
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    let too_many_symlink_code = 62;
+    if error.raw_os_error() == Some(too_many_symlink_code) {
+        CatError::TooManySymlinks
+    } else {
+        error.into()
+    }
+}
+
+#[cfg(unix)]
 fn ensure_open_input_is_not_directory(file: &File) -> CatResult<()> {
     if file.metadata()?.is_dir() {
         Err(CatError::IsDirectory)
@@ -95,7 +81,7 @@ fn ensure_open_input_is_not_directory(file: &File) -> CatResult<()> {
 
 #[cfg(unix)]
 fn open_input(path: &OsString) -> CatResult<File> {
-    let file = File::open(path)?;
+    let file = File::open(path).map_err(|error| map_open_error(path, error))?;
     ensure_open_input_is_not_directory(&file)?;
     Ok(file)
 }
