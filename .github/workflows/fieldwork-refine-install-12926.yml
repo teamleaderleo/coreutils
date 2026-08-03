@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fieldwork/install-refuse-just-created-overwrite-12926
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -67,6 +70,7 @@ jobs:
         run: cargo clippy --features install --no-default-features --all-targets -- -D warnings
 
       - name: Promote verified source
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           test "$(git diff --name-only | sort)" = $'src/uu/install/src/install.rs\ntests/by-util/test_install.rs'
