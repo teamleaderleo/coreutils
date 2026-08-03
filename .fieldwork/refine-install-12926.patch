@@ -82,7 +82,7 @@ diff --git a/src/uu/install/src/install.rs b/src/uu/install/src/install.rs
 diff --git a/tests/by-util/test_install.rs b/tests/by-util/test_install.rs
 --- a/tests/by-util/test_install.rs
 +++ b/tests/by-util/test_install.rs
-@@ -3009,6 +3009,127 @@ fn test_install_numbered_backups_allow_repeated_destination() {
+@@ -3009,6 +3009,151 @@ fn test_install_numbered_backups_allow_repeated_destination() {
      assert_eq!(at.read("dest/file.~2~"), "first");
  }
  
@@ -139,6 +139,30 @@ diff --git a/tests/by-util/test_install.rs b/tests/by-util/test_install.rs
 +        .stderr_contains("cannot stat 'missing/file'");
 +
 +    assert_eq!(at.read("dest/file"), "second");
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn test_install_copy_error_does_not_reserve_destination() {
++    let scene = TestScenario::new(util_name!());
++    let at = &scene.fixtures;
++
++    at.mkdir_all("source1");
++    at.mkdir_all("source2");
++    at.mkdir("dest");
++    std::os::unix::fs::symlink("/proc/self/mem", at.plus("source1/mem")).unwrap();
++    at.write("source2/mem", "second");
++
++    scene
++        .ucmd()
++        .arg("-t")
++        .arg("dest")
++        .arg("source1/mem")
++        .arg("source2/mem")
++        .fails()
++        .stderr_contains("Input/output error");
++
++    assert_eq!(at.read("dest/mem"), "second");
 +}
 +
 +#[test]
