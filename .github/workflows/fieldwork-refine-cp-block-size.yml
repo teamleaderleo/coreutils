@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fieldwork/cp-sparse-early-eof-12648
+  pull_request:
+    branches:
+      - base/canonical-main-20260804
 
 permissions:
   contents: write
@@ -43,6 +46,7 @@ jobs:
         run: cargo clippy --features cp --no-default-features --all-targets -- -D warnings
 
       - name: Promote source-only refinement
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           test "$(git diff --name-only | sort)" = 'src/uu/cp/src/platform/linux.rs'
