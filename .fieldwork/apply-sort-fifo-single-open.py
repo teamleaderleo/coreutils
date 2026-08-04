@@ -95,9 +95,19 @@ use std::fs::OpenOptions;
 use std::io::Write;
 #[cfg(unix)]
 use std::process::Command;
-#[cfg(unix)]
-use std::thread;
 use std::time::Duration;
+''',
+)
+replace_once(
+    tests,
+    '''use uutests::at_and_ucmd;
+use uutests::new_ucmd;
+use uutests::util::TestScenario;
+''',
+    '''use uutests::at_and_ucmd;
+use uutests::new_ucmd;
+use uutests::util::TestScenario;
+use uutests::util_name;
 ''',
 )
 replace_once(
@@ -113,7 +123,7 @@ fn test_named_fifo_unterminated_line_is_consumed_once() {
     nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR)
         .unwrap();
 
-    let writer = thread::spawn(move || {
+    let writer = std::thread::spawn(move || {
         let mut file = OpenOptions::new().write(true).open(fifo).unwrap();
         file.write_all(b"hello").unwrap();
     });
