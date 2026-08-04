@@ -2935,6 +2935,227 @@ fn test_install_proc_self_mem_as_dst() {
 }
 
 #[test]
+fn test_install_refuses_to_overwrite_just_created_destination() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+
+    scene
+        .ucmd()
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .fails()
+        .stderr_is("install: will not overwrite just-created 'dest/file' with 'source2/file'\n");
+
+    assert_eq!(at.read("dest/file"), "first");
+}
+
+#[test]
+fn test_install_refusal_preserves_original_simple_backup() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+    at.write("dest/file", "original");
+
+    scene
+        .ucmd()
+        .arg("--backup=simple")
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .fails()
+        .stderr_is("install: will not overwrite just-created 'dest/file' with 'source2/file'\n");
+
+    assert_eq!(at.read("dest/file"), "first");
+    assert_eq!(at.read("dest/file~"), "original");
+}
+
+#[test]
+fn test_install_numbered_backups_allow_repeated_destination() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+    at.write("dest/file", "original");
+
+    scene
+        .ucmd()
+        .arg("--backup=numbered")
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .succeeds()
+        .no_stderr();
+
+    assert_eq!(at.read("dest/file"), "second");
+    assert_eq!(at.read("dest/file.~1~"), "original");
+    assert_eq!(at.read("dest/file.~2~"), "first");
+}
+
+#[test]
+fn test_install_compare_noop_does_not_reserve_destination() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+    at.write("dest/file", "first");
+
+    // Make the first source and destination identical under --compare,
+    // including install's default mode, so the first operand is a true no-op.
+    for path in ["source1/file", "source2/file", "dest/file"] {
+        let path = at.plus(path);
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    scene
+        .ucmd()
+        .arg("--compare")
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .succeeds()
+        .no_stderr();
+
+    assert_eq!(at.read("dest/file"), "second");
+}
+
+#[test]
+fn test_install_missing_source_does_not_reserve_destination() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source2/file", "second");
+
+    scene
+        .ucmd()
+        .arg("-t")
+        .arg("dest")
+        .arg("missing/file")
+        .arg("source2/file")
+        .fails()
+        .stderr_contains("cannot stat 'missing/file'");
+
+    assert_eq!(at.read("dest/file"), "second");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn test_install_copy_error_does_not_reserve_destination() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    std::os::unix::fs::symlink("/proc/self/mem", at.plus("source1/mem")).unwrap();
+    at.write("source2/mem", "second");
+
+    scene
+        .ucmd()
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/mem")
+        .arg("source2/mem")
+        .fails()
+        .stderr_contains("Input/output error");
+
+    assert_eq!(at.read("dest/mem"), "second");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_install_post_copy_chown_failure_reserves_destination() {
+    if geteuid() == 0 {
+        return;
+    }
+
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+
+    scene
+        .ucmd()
+        .arg("--owner=root")
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .fails()
+        .stderr_contains("failed to chown")
+        .stderr_contains("will not overwrite just-created");
+
+    assert_eq!(at.read("dest/file"), "first");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_install_strip_failure_releases_destination() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir_all("source1");
+    at.mkdir_all("source2");
+    at.mkdir("dest");
+    at.write("source1/file", "first");
+    at.write("source2/file", "second");
+    at.write(
+        "strip-fails",
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> strip.log\nexit 1\n",
+    );
+
+    let strip_program = at.plus("strip-fails");
+    let mut permissions = fs::metadata(&strip_program).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&strip_program, permissions).unwrap();
+
+    scene
+        .ucmd()
+        .arg("--strip")
+        .arg("--strip-program")
+        .arg(strip_program)
+        .arg("-t")
+        .arg("dest")
+        .arg("source1/file")
+        .arg("source2/file")
+        .fails();
+
+    assert_eq!(at.read("strip.log").lines().count(), 2);
+    assert!(!at.file_exists("dest/file"));
+}
+
+#[test]
 fn test_install_backup_nil_same_file() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
