@@ -9,16 +9,16 @@ on:
       - base/canonical-main-20260804c
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  verify-and-promote:
+  verify-held-candidate:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -27,7 +27,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
-      - name: Apply and format fail-closed candidate
+      - name: Apply and format held candidate
         run: |
           set -euo pipefail
           python3 .fieldwork/apply-sort-fifo-single-open.py
@@ -48,20 +48,8 @@ jobs:
       - name: Run focused clippy
         run: cargo clippy --features sort --no-default-features --all-targets -- -D warnings
 
-      - name: Record candidate diff
+      - name: Record held candidate diff
         if: always()
         run: |
           git diff --stat
           git diff -- src/uu/sort/src/sort.rs tests/by-util/test_sort.rs
-
-      - name: Promote verified source
-        if: github.event_name == 'push'
-        run: |
-          set -euo pipefail
-          test "$(git diff --name-only | sort)" = $'src/uu/sort/src/sort.rs\ntests/by-util/test_sort.rs'
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/uu/sort/src/sort.rs tests/by-util/test_sort.rs
-          git rm .fieldwork/apply-sort-fifo-single-open.py .github/workflows/fieldwork-sort-fifo-single-open.yml
-          git commit -m "sort: consume named FIFOs with one open"
-          git push origin HEAD:"${GITHUB_REF_NAME}"
