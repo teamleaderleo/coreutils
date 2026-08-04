@@ -11,7 +11,9 @@ use crate::platform::is_safe_overwrite;
 use clap::{Arg, ArgAction, Command};
 use memchr::memchr2;
 use std::ffi::OsString;
-use std::fs::{File, metadata};
+use std::fs::File;
+#[cfg(not(unix))]
+use std::fs::metadata;
 use std::io::{self, BufWriter, ErrorKind, IsTerminal, Read, Write};
 #[cfg(any(unix, target_os = "wasi"))]
 use std::os::fd::AsFd;
@@ -347,22 +349,11 @@ fn cat_handle<R: FdReadable>(
 }
 
 #[cfg(unix)]
-fn map_open_error(path: &OsString, error: io::Error) -> CatError {
-    // Successful inputs are classified from their opened descriptor. A failed
-    // open consumes no file, so a path lookup here is used only to preserve the
-    // established cross-Unix socket diagnostic.
-    if metadata(path).is_ok_and(|metadata| metadata.file_type().is_socket()) {
-        return CatError::NoSuchDeviceOrAddress;
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    let too_many_symlink_code = 40;
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    let too_many_symlink_code = 62;
-    if error.raw_os_error() == Some(too_many_symlink_code) {
-        CatError::TooManySymlinks
-    } else {
-        error.into()
+fn map_open_error(error: io::Error) -> CatError {
+    match rustix::io::Errno::from_io_error(&error) {
+        Some(rustix::io::Errno::NXIO) => CatError::NoSuchDeviceOrAddress,
+        Some(rustix::io::Errno::LOOP) => CatError::TooManySymlinks,
+        _ => error.into(),
     }
 }
 
@@ -400,7 +391,7 @@ fn ensure_open_input_supported(file: &File) -> CatResult<()> {
 
 #[cfg(unix)]
 fn open_input(path: &OsString) -> CatResult<File> {
-    let file = File::open(path).map_err(|error| map_open_error(path, error))?;
+    let file = File::open(path).map_err(map_open_error)?;
     ensure_open_input_supported(&file)?;
     Ok(file)
 }
