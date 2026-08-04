@@ -159,6 +159,10 @@ enum ArgOptions<'a> {
     SavedState(Vec<u32>),
 }
 
+fn requires_set_attr(args: &[ArgOptions<'_>]) -> bool {
+    args.iter().any(|arg| !matches!(arg, ArgOptions::Print(_)))
+}
+
 impl<'a> From<AllFlags<'a>> for ArgOptions<'a> {
     fn from(flag: AllFlags<'a>) -> Self {
         ArgOptions::Flags(flag)
@@ -436,7 +440,9 @@ fn stty(opts: &Options) -> UResult<()> {
                 }
             }
         }
-        tcsetattr(opts.file.as_fd(), set_arg, &termios)?;
+        if requires_set_attr(&valid_args) {
+            tcsetattr(opts.file.as_fd(), set_arg, &termios)?;
+        }
     } else {
         let termios = tcgetattr(opts.file.as_fd()).map_err_context(|| opts.device_name.clone())?;
         print_settings(&termios, opts)?;
@@ -1345,6 +1351,19 @@ mod tests {
     use super::*;
 
     // Essential unit tests for complex internal parsing and logic functions.
+
+    #[test]
+    fn print_only_actions_do_not_require_tcsetattr() {
+        assert!(!requires_set_attr(&[]));
+        assert!(!requires_set_attr(&[ArgOptions::Print(PrintSetting::Size)]));
+        assert!(requires_set_attr(&[ArgOptions::Special(
+            SpecialSetting::Rows(24),
+        )]));
+        assert!(requires_set_attr(&[
+            ArgOptions::Print(PrintSetting::Size),
+            ArgOptions::Special(SpecialSetting::Cols(80)),
+        ]));
+    }
 
     // Control character parsing tests
     #[test]
