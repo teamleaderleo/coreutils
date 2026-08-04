@@ -68,6 +68,9 @@ jobs:
               child = os.fork()
               if child == 0:
                   os.setpgid(0, 0)
+                  signal.signal(signal.SIGTTOU, signal.SIG_DFL)
+                  signal.signal(signal.SIGTTIN, signal.SIG_DFL)
+                  signal.signal(signal.SIGTSTP, signal.SIG_DFL)
                   os.dup2(slave, 0)
                   os.dup2(slave, 1)
                   os.dup2(slave, 2)
@@ -78,7 +81,6 @@ jobs:
               os.close(slave)
               deadline = time.monotonic() + 5
               result = "timeout"
-              status = None
               while time.monotonic() < deadline:
                   pid, status = os.waitpid(child, os.WNOHANG | os.WUNTRACED)
                   if pid:
