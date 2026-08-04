@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fieldwork/cat-fd-classification-toctou-13042-v2
+  pull_request:
+    branches:
+      - base/canonical-main-20260804
 
 permissions:
   contents: write
@@ -49,6 +52,7 @@ jobs:
         run: cargo clippy --features cat --no-default-features --all-targets -- -D warnings
 
       - name: Promote source-only refinement
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           test "$(git diff --name-only | sort)" = 'src/uu/cat/src/cat.rs'
