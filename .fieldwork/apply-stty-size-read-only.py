@@ -56,6 +56,7 @@ replace_once(
 
     #[test]
     fn print_only_actions_do_not_require_tcsetattr() {
+        assert!(!requires_set_attr(&[]));
         assert!(!requires_set_attr(&[ArgOptions::Print(PrintSetting::Size)]));
         assert!(requires_set_attr(&[ArgOptions::Special(
             SpecialSetting::Rows(24),
