@@ -42,6 +42,7 @@ install-error-not-a-directory = échec de l'accès à { $path } : N'est pas un r
 install-error-existing-file-not-directory = impossible de créer le répertoire { $path } : Le fichier existe
 install-error-override-directory-failed = impossible d'écraser le répertoire { $dir } avec un non-répertoire { $file }
 install-error-same-file = { $file1 } et { $file2 } sont le même fichier
+install-error-will-not-overwrite-just-created = n'écrasera pas { $dest } qui vient d'être créé avec { $source }
 install-error-extra-operand = opérande supplémentaire { $operand }
   { $usage }
 install-error-invalid-mode = Chaîne de mode invalide : { $error }
