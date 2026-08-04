@@ -1,0 +1,55 @@
+name: Fieldwork sort FIFO single open
+
+on:
+  push:
+    branches:
+      - fieldwork/sort-fifo-single-open-13172
+  pull_request:
+    branches:
+      - base/canonical-main-20260804c
+
+permissions:
+  contents: read
+
+jobs:
+  verify-held-candidate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Apply and format held candidate
+        run: |
+          set -euo pipefail
+          python3 .fieldwork/apply-sort-fifo-single-open.py
+          cargo fmt --all
+          test "$(git diff --name-only | sort)" = $'src/uu/sort/src/sort.rs\ntests/by-util/test_sort.rs'
+          cargo fmt --all -- --check
+          git diff --check
+
+      - name: Test FIFO single-open behavior
+        run: cargo test --features sort --no-default-features test_named_fifo_unterminated_line_is_consumed_once
+
+      - name: Test regular-input preflight ordering
+        run: cargo test --features sort --no-default-features test_missing_file_is_reported_before_waiting_on_fifo
+
+      - name: Run sort integration module
+        run: cargo test --features sort --no-default-features --test tests test_sort
+
+      - name: Run focused clippy
+        run: cargo clippy --features sort --no-default-features --all-targets -- -D warnings
+
+      - name: Record held candidate diff
+        if: always()
+        run: |
+          git diff --stat
+          git diff -- src/uu/sort/src/sort.rs tests/by-util/test_sort.rs
