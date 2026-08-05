@@ -13,7 +13,7 @@ old = '''    let blksize = dst_file
         .unwrap();
     sparse_copy_data(&mut src_file, &dst_file, size, blksize, context)
 '''
-new = '''    let blksize = dst_file
+new = '''    let blksize: usize = dst_file
         .metadata()
         .map_err(&ctx_err)?
         .blksize()
