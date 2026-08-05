@@ -11,7 +11,9 @@ use crate::platform::is_safe_overwrite;
 use clap::{Arg, ArgAction, Command};
 use memchr::memchr2;
 use std::ffi::OsString;
-use std::fs::{File, metadata};
+use std::fs::File;
+#[cfg(not(unix))]
+use std::fs::metadata;
 use std::io::{self, BufWriter, ErrorKind, IsTerminal, Read, Write};
 #[cfg(any(unix, target_os = "wasi"))]
 use std::os::fd::AsFd;
@@ -182,25 +184,6 @@ struct InputHandle<R: FdReadable> {
     is_interactive: bool,
 }
 
-/// Concrete enum of recognized file types.
-///
-/// *Note*: `cat`-ing a directory should result in an
-/// [`CatError::IsDirectory`]
-enum InputType {
-    Directory,
-    File,
-    StdIn,
-    SymLink,
-    #[cfg(unix)]
-    BlockDevice,
-    #[cfg(unix)]
-    CharacterDevice,
-    #[cfg(unix)]
-    Fifo,
-    #[cfg(unix)]
-    Socket,
-}
-
 mod options {
     pub static FILE: &str = "file";
     pub static SHOW_ALL: &str = "show-all";
@@ -365,35 +348,92 @@ fn cat_handle<R: FdReadable>(
     }
 }
 
-fn cat_path(path: &OsString, options: &OutputOptions, state: &mut OutputState) -> CatResult<()> {
-    match get_input_type(path)? {
-        InputType::StdIn => {
-            let stdin = io::stdin();
-            let is_interactive = stdin.is_terminal();
-            if !is_safe_overwrite(&stdin, &io::stdout()) {
-                return Err(CatError::OutputIsInput);
-            }
-            let mut handle = InputHandle {
-                reader: stdin,
-                is_interactive,
-            };
-            cat_handle(&mut handle, options, state)
-        }
-        InputType::Directory => Err(CatError::IsDirectory),
-        #[cfg(unix)]
-        InputType::Socket => Err(CatError::NoSuchDeviceOrAddress),
-        _ => {
-            let file = File::open(path)?;
-            if !is_safe_overwrite(&file, &io::stdout()) {
-                return Err(CatError::OutputIsInput);
-            }
-            let mut handle = InputHandle {
-                reader: file,
-                is_interactive: false,
-            };
-            cat_handle(&mut handle, options, state)
-        }
+#[cfg(unix)]
+fn map_open_error(error: io::Error) -> CatError {
+    match rustix::io::Errno::from_io_error(&error) {
+        Some(rustix::io::Errno::NXIO) => CatError::NoSuchDeviceOrAddress,
+        Some(rustix::io::Errno::LOOP) => CatError::TooManySymlinks,
+        _ => error.into(),
     }
+}
+
+#[cfg(unix)]
+fn ensure_open_input_supported(file: &File) -> CatResult<()> {
+    let file_type = file.metadata()?.file_type();
+    if file_type.is_dir() {
+        Err(CatError::IsDirectory)
+    } else if file_type.is_file()
+        || file_type.is_fifo()
+        || file_type.is_char_device()
+        || file_type.is_block_device()
+    {
+        Ok(())
+    } else {
+        Err(CatError::UnknownFiletype {
+            ft_debug: format!("{file_type:?}"),
+        })
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_open_input_supported(file: &File) -> CatResult<()> {
+    let file_type = file.metadata()?.file_type();
+    if file_type.is_dir() {
+        Err(CatError::IsDirectory)
+    } else if file_type.is_file() {
+        Ok(())
+    } else {
+        Err(CatError::UnknownFiletype {
+            ft_debug: format!("{file_type:?}"),
+        })
+    }
+}
+
+#[cfg(unix)]
+fn open_input(path: &OsString) -> CatResult<File> {
+    let file = File::open(path).map_err(map_open_error)?;
+    ensure_open_input_supported(&file)?;
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_input(path: &OsString) -> CatResult<File> {
+    // Some non-Unix platforms do not permit opening a directory as a regular
+    // file. Preserve the established "Is a directory" diagnostic there.
+    if metadata(path)?.is_dir() {
+        return Err(CatError::IsDirectory);
+    }
+    let file = File::open(path)?;
+    ensure_open_input_supported(&file)?;
+    Ok(file)
+}
+
+fn cat_path(path: &OsString, options: &OutputOptions, state: &mut OutputState) -> CatResult<()> {
+    if path == "-" {
+        let stdin = io::stdin();
+        let is_interactive = stdin.is_terminal();
+        if !is_safe_overwrite(&stdin, &io::stdout()) {
+            return Err(CatError::OutputIsInput);
+        }
+        let mut handle = InputHandle {
+            reader: stdin,
+            is_interactive,
+        };
+        return cat_handle(&mut handle, options, state);
+    }
+
+    // Open once, then classify and read that same file descriptor. This keeps
+    // a path replacement from making the type check describe a different file
+    // than the one whose contents are consumed.
+    let file = open_input(path)?;
+    if !is_safe_overwrite(&file, &io::stdout()) {
+        return Err(CatError::OutputIsInput);
+    }
+    let mut handle = InputHandle {
+        reader: file,
+        is_interactive: false,
+    };
+    cat_handle(&mut handle, options, state)
 }
 
 fn cat_files<'a, I>(files: I, options: &OutputOptions) -> UResult<()>
@@ -426,51 +466,6 @@ where
             error_messages.len() as i32,
             error_messages.join(line_joiner),
         ))
-    }
-}
-
-/// Classifies the `InputType` of file at `path` if possible
-///
-/// # Arguments
-///
-/// * `path` - Path on a file system to classify metadata
-fn get_input_type(path: &OsString) -> CatResult<InputType> {
-    if path == "-" {
-        return Ok(InputType::StdIn);
-    }
-
-    let ft = match metadata(path) {
-        Ok(md) => md.file_type(),
-        Err(e) => {
-            if let Some(raw_error) = e.raw_os_error() {
-                // On Unix-like systems, the error code for "Too many levels of symbolic links" is 40 (ELOOP).
-                // we want to provide a proper error message in this case.
-                #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-                let too_many_symlink_code = 40;
-                #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-                let too_many_symlink_code = 62;
-                if raw_error == too_many_symlink_code {
-                    return Err(CatError::TooManySymlinks);
-                }
-            }
-            return Err(e.into());
-        }
-    };
-    match ft {
-        #[cfg(unix)]
-        ft if ft.is_block_device() => Ok(InputType::BlockDevice),
-        #[cfg(unix)]
-        ft if ft.is_char_device() => Ok(InputType::CharacterDevice),
-        #[cfg(unix)]
-        ft if ft.is_fifo() => Ok(InputType::Fifo),
-        #[cfg(unix)]
-        ft if ft.is_socket() => Ok(InputType::Socket),
-        ft if ft.is_dir() => Ok(InputType::Directory),
-        ft if ft.is_file() => Ok(InputType::File),
-        ft if ft.is_symlink() => Ok(InputType::SymLink),
-        _ => Err(CatError::UnknownFiletype {
-            ft_debug: format!("{ft:?}"),
-        }),
     }
 }
 
@@ -721,6 +716,26 @@ fn handle_broken_pipe(error: &io::Error) {
 #[cfg(test)]
 mod tests {
     use std::io::{BufWriter, stdout};
+
+    #[cfg(unix)]
+    #[test]
+    fn opened_input_classification_survives_path_replacement() {
+        use std::fs::{self, File};
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("input");
+        let moved = temp.path().join("opened-input");
+        fs::write(&path, b"content").unwrap();
+        let file = File::open(&path).unwrap();
+
+        fs::rename(&path, &moved).unwrap();
+        fs::create_dir(&path).unwrap();
+
+        assert!(super::ensure_open_input_supported(&file).is_ok());
+        assert!(file.metadata().unwrap().is_file());
+        assert!(path.is_dir());
+    }
 
     #[test]
     fn test_write_tab_to_end_with_newline() {
