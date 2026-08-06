@@ -12,6 +12,7 @@ use file_diff::diff;
 use filetime::{FileTime, set_file_times};
 #[cfg(all(feature = "selinux", any(target_os = "linux", target_os = "android")))]
 use selinux::SecurityContext;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::Debug;
 use std::fs::{self, metadata};
@@ -126,6 +127,9 @@ enum InstallError {
 
     #[error("{}", translate!("install-error-same-file", "file1" => .0.quote(), "file2" => .1.quote()))]
     SameFile(PathBuf, PathBuf),
+
+    #[error("{}", translate!("install-error-will-not-overwrite-just-created", "dest" => .0.quote(), "source" => .1.quote()))]
+    WillNotOverwriteJustCreated(PathBuf, PathBuf),
 
     #[error("{}", translate!("install-error-extra-operand", "operand" => .0.quote(), "usage" => .1.clone()))]
     ExtraOperand(OsString, String),
@@ -830,6 +834,7 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
     if !target_dir.is_dir() {
         return Err(InstallError::TargetDirIsntDir(target_dir.to_path_buf()).into());
     }
+    let mut copied_destinations = HashSet::with_capacity(files.len());
     for sourcepath in files {
         let source_metadata = match metadata_for_source(sourcepath) {
             Ok(metadata) => metadata,
@@ -849,12 +854,50 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
         let filename = sourcepath.components().next_back().unwrap();
         targetpath.push(filename);
 
-        show_if_err!(copy(sourcepath, &targetpath, b));
+        if copied_destinations.contains(&targetpath) && b.backup_mode != BackupMode::Numbered {
+            show!(InstallError::WillNotOverwriteJustCreated(
+                targetpath,
+                sourcepath.clone(),
+            ));
+            continue;
+        }
+
+        show_if_err!(copy_into_dir_entry(
+            sourcepath,
+            &targetpath,
+            b,
+            &mut copied_destinations,
+        ));
     }
     // If the exit code was set, or show! has been called at least once
     // (which sets the exit code as well), function execution will end after
     // this return.
     Ok(())
+}
+
+fn copy_into_dir_entry(
+    from: &Path,
+    to: &Path,
+    b: &Behavior,
+    copied_destinations: &mut HashSet<PathBuf>,
+) -> UResult<()> {
+    let result = copy_with_created_callback(from, to, b, || {
+        copied_destinations.insert(to.to_path_buf());
+    });
+
+    // A failed strip removes the destination. Release the name only when no
+    // directory entry remains; other post-copy failures leave a just-created
+    // file that later same-name sources must not overwrite.
+    if result.is_err()
+        && matches!(
+            fs::symlink_metadata(to),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        )
+    {
+        copied_destinations.remove(to);
+    }
+
+    result
 }
 
 /// Handle ownership changes when -o/--owner or -g/--group flags are used.
@@ -1183,6 +1226,13 @@ fn finalize_installed_file(
 /// If the copy system call fails, we print a verbose error and return an empty error value.
 ///
 fn copy(from: &Path, to: &Path, b: &Behavior) -> UResult<()> {
+    copy_with_created_callback(from, to, b, || {})
+}
+
+fn copy_with_created_callback<F>(from: &Path, to: &Path, b: &Behavior, on_created: F) -> UResult<()>
+where
+    F: FnOnce(),
+{
     if b.compare && !need_copy(from, to, b) {
         return Ok(());
     }
@@ -1190,6 +1240,7 @@ fn copy(from: &Path, to: &Path, b: &Behavior) -> UResult<()> {
     let backup_path = perform_backup(from, to, b)?;
 
     copy_file(from, to)?;
+    on_created();
 
     finalize_installed_file(from, to, b, backup_path)
 }
